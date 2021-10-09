@@ -61,18 +61,29 @@ class OntologyAnalyzer:
         current_node, _ = current_node.split(TRAIT_DELIMITER) if TRAIT_DELIMITER in current_node else [current_node, '']
         current_node = current_node.split(SYNONYM_DELIMITER)
         current_node, synonyms = current_node[0], current_node[1:]
+        display_name = re.findall("\|\|(.*)\|\|", current_node)
+        if display_name:
+            display_name = display_name[0]
+        else:
+            display_name = None
 
+        auto_qualify = re.findall("\|\|.*\|\|(true)", current_node)
+        if auto_qualify:
+            auto_qualify = auto_qualify[0]
+        else:
+            auto_qualify = False
+        current_node = re.sub("\|\|.*\|\|(true)?","", current_node)
         if current_node.startswith("**"):
             term = current_node.replace("**", "")
             global_term_synonym = global_synonyms.get(term, [])
-            return current_node, term, synonym_set(synonyms + global_term_synonym), "mandatory"
+            return current_node, term, synonym_set(synonyms + global_term_synonym), "mandatory", display_name, auto_qualify
         elif current_node.startswith("!!"):
             term = current_node.replace("!!", "")
             global_term_synonym = global_synonyms.get(term, [])
-            return current_node, term, synonym_set(synonyms + global_term_synonym), "organizer"
+            return current_node, term, synonym_set(synonyms + global_term_synonym), "organizer", display_name, auto_qualify
         else:
             global_term_synonym = global_synonyms.get(current_node, [])
-            return current_node, current_node, synonym_set(synonyms + global_term_synonym), "default"
+            return current_node, current_node, synonym_set(synonyms + global_term_synonym), "default",display_name, auto_qualify
 
     def valid_root(self):
         root_nodes = {faq["terms"][-1] for faq in self.file_data['faqs'] if faq["terms"]}
@@ -88,16 +99,16 @@ class OntologyAnalyzer:
         # if root node missing in terms
         root_name, is_valid_root = self.valid_root()
         global_synonyms = self.file_data['synonyms'] if 'synonyms' in self.file_data else {}
-        root_raw_term, root_term, root_synonyms, root_term_usage = self.parse_term(root_name, global_synonyms)
+        root_raw_term, root_term, root_synonyms, root_term_usage, display_name, auto_qualify = self.parse_term(root_name, global_synonyms)
         root_node_id = uuid.uuid4()
-        root = Node((root_node_id, root_term, root_synonyms, True, root_term_usage))
+        root = Node((root_node_id, root_term, root_synonyms, True, root_term_usage, display_name))
         node_at_node_map[root_term] = root
         unmapped_paths = self.file_data['unmappedpath'] if 'unmappedpath' in self.file_data else []
         for faq_entry in self.file_data['faqs'] + unmapped_paths:
             raw_terms = []
             faq_entry["terms"] = faq_entry["terms"] + [root_name] if not is_valid_root else faq_entry["terms"]
             for idx, raw_term in enumerate(reversed(faq_entry["terms"])):
-                raw_term, term, synonyms, term_usage = self.parse_term(raw_term, global_synonyms)
+                raw_term, term, synonyms, term_usage, display_name, auto_qualify = self.parse_term(raw_term, global_synonyms)
                 raw_terms.append(raw_term)
                 if idx != 0:
                     terms_path = '/'.join(raw_terms)
@@ -109,7 +120,7 @@ class OntologyAnalyzer:
                         faq_entry['nodeId'] = node_id
                         path_node_id_map[terms_path] = node_id
                         has_faq = True if 'question' in faq_entry else False
-                        node_at_node_map[terms_path] = Node((node_id, term, synonyms, has_faq, term_usage),
+                        node_at_node_map[terms_path] = Node((node_id, term, synonyms, has_faq, term_usage, display_name),
                                                             parent=node_at_node_map[parent_path])
                 elif idx == 0:
                     faq_entry['nodeId'] = root_node_id
