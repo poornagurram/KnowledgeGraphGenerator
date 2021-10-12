@@ -65,7 +65,7 @@ class OntologyAnalyzer:
         if display_name:
             display_name = display_name[0]
         else:
-            display_name = None
+            display_name = ""
 
         auto_qualify = re.findall("\|\|.*\|\|(true)", current_node)
         if auto_qualify:
@@ -83,7 +83,7 @@ class OntologyAnalyzer:
             return current_node, term, synonym_set(synonyms + global_term_synonym), "organizer", display_name, auto_qualify
         else:
             global_term_synonym = global_synonyms.get(current_node, [])
-            return current_node, current_node, synonym_set(synonyms + global_term_synonym), "default",display_name, auto_qualify
+            return current_node, current_node, synonym_set(synonyms + global_term_synonym), "default", display_name, auto_qualify
 
     def valid_root(self):
         root_nodes = {faq["terms"][-1] for faq in self.file_data['faqs'] if faq["terms"]}
@@ -101,7 +101,7 @@ class OntologyAnalyzer:
         global_synonyms = self.file_data['synonyms'] if 'synonyms' in self.file_data else {}
         root_raw_term, root_term, root_synonyms, root_term_usage, display_name, auto_qualify = self.parse_term(root_name, global_synonyms)
         root_node_id = uuid.uuid4()
-        root = Node((root_node_id, root_term, root_synonyms, True, root_term_usage, display_name))
+        root = Node((root_node_id, root_term, root_synonyms, True, root_term_usage, display_name, auto_qualify))
         node_at_node_map[root_term] = root
         unmapped_paths = self.file_data['unmappedpath'] if 'unmappedpath' in self.file_data else []
         for faq_entry in self.file_data['faqs'] + unmapped_paths:
@@ -120,8 +120,8 @@ class OntologyAnalyzer:
                         faq_entry['nodeId'] = node_id
                         path_node_id_map[terms_path] = node_id
                         has_faq = True if 'question' in faq_entry else False
-                        node_at_node_map[terms_path] = Node((node_id, term, synonyms, has_faq, term_usage, display_name),
-                                                            parent=node_at_node_map[parent_path])
+                        node_at_node_map[terms_path] = Node((node_id, term, synonyms, has_faq, term_usage, display_name,
+                                                             auto_qualify), parent=node_at_node_map[parent_path])
                 elif idx == 0:
                     faq_entry['nodeId'] = root_node_id
         # for pre, fill, node in RenderTree(root):
@@ -258,11 +258,20 @@ class OntologyAnalyzer:
     def fetch_ontology(self):
         parent_faq_map = dict()
         parent_tags_map = dict()
+        parent_link_map = dict()
         root = self.build_tree()
         for faq_entry in self.file_data['faqs']:
 
             all_tags = list()
             all_questions = list()
+            all_links = list()
+
+            if faq_entry.get('faqLinkedBy'):
+                links = (faq_entry.get('faqLinkedBy'), None)
+            elif faq_entry.get('faqLinkedTo'):
+                links = (None, faq_entry.get('faqLinkedTo'))
+            else:
+                links = (None, None)
 
             questions = [faq_entry.get("question")]
             tags = []
@@ -288,11 +297,12 @@ class OntologyAnalyzer:
 
             all_tags.append(tags)
             all_questions.append(questions)
-
+            all_links.append(links)
             parent_tags_map[faq_entry.get('nodeId')] = all_tags
             parent_faq_map[faq_entry.get("nodeId")] = all_questions
+            parent_link_map[faq_entry.get("nodeId")] = all_links
 
-        return root, parent_faq_map, parent_tags_map
+        return root, parent_faq_map, parent_tags_map, parent_link_map
 
     def read_file(self):
         with open(self.file_path) as json_file:

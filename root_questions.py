@@ -10,6 +10,15 @@ from anytree.search import findall, find
 
 map_child = dict()
 
+tuple_indices = {
+    "id": 0,
+    "node_name": 1,
+    "synonyms": 2,
+    "has_faq": 3,
+    "node_type": -3,
+    "display_name": -2,
+    "auto_qualify": -1
+}
 
 def get_ques_info(question, root_node, parent_faq_map):
     for child in root_node.leaves:
@@ -33,13 +42,25 @@ def parent_child_map(node):
 
 def create_root_nodes(intent_name=None, child_list=None, root_parent=None, question=None):
     current_children = []
-
+    if intent_name is None:
+        print("No intent name specified")
+        return
     for child in child_list:
-        for child_name, dis_name in map_child[(root_parent.name[1], root_parent.name[-1])]:
+        if (root_parent.name[tuple_indices['node_name']], root_parent.name[tuple_indices['display_name']]) not in map_child:
+            print(f"No concept called '{root_parent.name[tuple_indices['node_name']]}' available with display name {root_parent.name[tuple_indices['display_name']]}")
+            print(f"******Heuristic exceptions*******")
+            return
+        for child_name, dis_name in map_child[(root_parent.name[tuple_indices['node_name']],
+                                               root_parent.name[tuple_indices['display_name']])]:
             if child_name == child:
                 current_children.append(child_name)
     new_children = set(child_list) - set(current_children)
-    root_intent = findall(root_parent, filter_=lambda node: node.name[1] in (intent_name,))[0]
+    root_intent = findall(root_parent, filter_=lambda node: node.name[1] in (intent_name,))
+    if root_intent is None or not root_intent:
+        print(f"parent {root_parent} doesn't have intent {intent_name} defined")
+        return
+    else:
+        root_intent = root_intent[0]
     root_intent.name = list(root_intent.name)
     if root_intent.name[2] is None:
         root_intent.name[2] = [str(intent_name) + " xxxxx"]
@@ -52,17 +73,23 @@ def create_root_nodes(intent_name=None, child_list=None, root_parent=None, quest
         root_child = Node((temp_id, child_name, [], True, "default", ""), parent=root_parent)
         temp_id = uuid.uuid4()
         root_child_intent = Node((temp_id, intent_name, [str(intent_name) + " ooooo"], True, "default", ""), parent=root_child)
-        parent_faq_map[root_child_intent.name[0]] = "~" + question
+        parent_faq_map[root_child_intent.name[0]] = [["~" + question]]
 
     for child_name in current_children:
         current_child = findall(root_parent, filter_=lambda node: node.name[1] in (child_name,))[0]
-        current_child_intent = findall(current_child, filter_=lambda node: node.name[1] in (intent_name,))[0]
-        current_child_intent.name = list(current_child_intent.name)
-        current_child_intent.name[2].extend([str(intent_name) + " ooooo"])
-        current_child_intent.name = tuple(current_child_intent.name)
+        current_child_intent = findall(current_child, filter_=lambda node: node.name[1] in (intent_name,))
+        if current_child_intent:
+            current_child_intent = current_child_intent[0]
+            current_child_intent.name = list(current_child_intent.name)
+            current_child_intent.name[2].extend([str(intent_name) + " ooooo"])
+            current_child_intent.name = tuple(current_child_intent.name)
+        else:
+            temp_id = uuid.uuid4()
+            current_child_intent = Node((temp_id, intent_name, [str(intent_name) + " ooooo"], True, "default", ""),
+                                     parent=current_child)
         temp_id = uuid.uuid4()
         root_child_intent = Node((temp_id, intent_name, [str(intent_name) + " ooooo"], True, "default", ""), parent=current_child)
-        parent_faq_map[root_child_intent.name[0]] = "~" + question
+        parent_faq_map[root_child_intent.name[0]] = [["~" + question]]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -75,7 +102,8 @@ if __name__ == "__main__":
     oa = OntologyAnalyzer()
     oa.file_path = args['input_file_path']
     oa.read_file()
-    root, parent_faq_map, parent_tags_map = oa.fetch_ontology()
+    root, parent_faq_map, parent_tags_map, parent_link_map = oa.fetch_ontology()
+    print("before processing no of questions are", len(root.leaves))
     # intent_id = findall(root, filter_=lambda node: node.name[1] in ("Phase Three Merged",))
     question = "Why was a W-8 (NNW8) rejected?"
     # print(RenderTree(root))
@@ -92,8 +120,31 @@ if __name__ == "__main__":
         child_list = ast.literal_eval(row.Children)
         question = row.Question
         intent_id = findall(root, filter_=lambda node: node.name[1] in (parent_term,))
-        if len(intent_id) > 1:
-            print("multiple nodes")
+        if intent_id:
+            if len(intent_id) > 1:
+                print(f"multiple nodes found for {parent_term}")
+                max_parent = intent_id[0]
+                for i in range(len(intent_id)):
+                    if len(max_parent.leaves) < len(intent_id[i].leaves):
+                        max_parent = intent_id[i]
+                create_root_nodes(intent_name=intent_term, child_list=child_list,
+                                  root_parent=max_parent, question=question)
+            else:
+                create_root_nodes(intent_name=intent_term, child_list=child_list,
+                                  root_parent=intent_id[0], question=question)
         else:
-            create_root_nodes(intent_name=intent_term, child_list=child_list,
-                              root_parent=intent_id[0], question=question)
+            print(f"Unable to find {parent_term}")
+    print("after processing no of questions are", len(root.leaves))
+    for i in root.leaves:
+        if i.name[0] not in parent_faq_map:
+            continue
+        print(parent_faq_map[i.name[0]])
+        temp = i
+        path_list = []
+        while(temp):
+            path_list.append(temp.name[tuple_indices['node_name']]+f"||{temp.name[tuple_indices['display_name']]}||")
+            if "can" in temp.name[tuple_indices['synonyms']]:
+                print("nodes", temp.name[tuple_indices['node_name']])
+            temp = temp.parent
+        print("/".join(path_list[::-1]))
+        # print(parent_link_map[i.name[0]])
