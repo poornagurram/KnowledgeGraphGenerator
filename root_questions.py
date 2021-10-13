@@ -20,10 +20,11 @@ tuple_indices = {
     "auto_qualify": -1
 }
 
+
 def get_ques_info(question, root_node, parent_faq_map):
     for child in root_node.leaves:
         for i in range(len(parent_faq_map[child.name[0]][:])):
-            if parent_faq_map[child.name[0]][i][0] == question:
+            if parent_faq_map[child.name[0]][i][0][1] == question:
                 return child.name[1]
 
 
@@ -33,10 +34,10 @@ def parent_child_map(node):
         return None
     else:
         # print(f"parent {node.name[1]}")
-        map_child[(node.name[1], node.name[-1])] = []
+        map_child[(node.name[1], node.name[-2])] = []
         for i in node.children:
             # print(f"child {i.name[-1]}")
-            map_child[(node.name[1], node.name[-1])].append((i.name[1], i.name[-1]))
+            map_child[(node.name[1], node.name[-2])].append((i.name[1], i.name[-2]))
             parent_child_map(i)
 
 
@@ -73,7 +74,8 @@ def create_root_nodes(intent_name=None, child_list=None, root_parent=None, quest
         root_child = Node((temp_id, child_name, [], True, "default", ""), parent=root_parent)
         temp_id = uuid.uuid4()
         root_child_intent = Node((temp_id, intent_name, [str(intent_name) + " ooooo"], True, "default", ""), parent=root_child)
-        parent_faq_map[root_child_intent.name[0]] = [["~" + question]]
+        temp_id = uuid.uuid4()
+        parent_faq_map[root_child_intent.name[0]] = [[(temp_id, "~" + question)]]
 
     for child_name in current_children:
         current_child = findall(root_parent, filter_=lambda node: node.name[1] in (child_name,))[0]
@@ -88,8 +90,11 @@ def create_root_nodes(intent_name=None, child_list=None, root_parent=None, quest
             current_child_intent = Node((temp_id, intent_name, [str(intent_name) + " ooooo"], True, "default", ""),
                                      parent=current_child)
         temp_id = uuid.uuid4()
-        root_child_intent = Node((temp_id, intent_name, [str(intent_name) + " ooooo"], True, "default", ""), parent=current_child)
-        parent_faq_map[root_child_intent.name[0]] = [["~" + question]]
+        root_child_intent = Node((temp_id, intent_name, [str(intent_name) + " ooooo"], True, "default", ""),
+                                 parent=current_child)
+        temp_id = uuid.uuid4()
+        parent_faq_map[root_child_intent.name[0]] = [[(temp_id, "~" + question)]]
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -114,6 +119,7 @@ if __name__ == "__main__":
     #     w.writerows(map_child.items())
     root_df = pd.read_csv("/home/poornaprudhvigurram/Downloads/root_questions_set1.csv")
     root_df['intent'] = root_df['Question'].apply(get_ques_info, root_node=root, parent_faq_map=parent_faq_map)
+    different_concept_name = []
     for row in root_df[['Parent', 'intent', 'Children', "Question"]].itertuples():
         parent_term = row.Parent
         intent_term = row.intent
@@ -134,17 +140,44 @@ if __name__ == "__main__":
                                   root_parent=intent_id[0], question=question)
         else:
             print(f"Unable to find {parent_term}")
+            different_concept_name.append(parent_term)
     print("after processing no of questions are", len(root.leaves))
+    df_rows = []
     for i in root.leaves:
+        row = []
         if i.name[0] not in parent_faq_map:
             continue
-        print(parent_faq_map[i.name[0]])
+        # question id and question
+        row.extend(list(parent_faq_map[i.name[0]][0][0]))
         temp = i
         path_list = []
-        while(temp):
-            path_list.append(temp.name[tuple_indices['node_name']]+f"||{temp.name[tuple_indices['display_name']]}||")
-            if "can" in temp.name[tuple_indices['synonyms']]:
+        while temp:
+            path = temp.name[tuple_indices['node_name']]+f"||{temp.name[tuple_indices['display_name']]}||"
+            if temp.name[tuple_indices['auto_qualify']]:
+                path = path+"true"
+            if temp.name[tuple_indices['node_type']] == 'organizer':
+                path = "!!"+path
+            if "is" in temp.name[tuple_indices['synonyms']]:
                 print("nodes", temp.name[tuple_indices['node_name']])
+            if temp.name[tuple_indices['synonyms']]:
+                syns = "/".join(temp.name[tuple_indices['synonyms']])
+                syns = '('+syns+')'
+                path = path+syns
+            path_list.append(path)
             temp = temp.parent
-        print("/".join(path_list[::-1]))
-        # print(parent_link_map[i.name[0]])
+        row.append(",".join(path_list[::-1]))
+        try:
+            row.extend(list(parent_link_map[i.name[0]][0]))
+        except:
+            row.extend(list((None, None)))
+        # print(row)
+        df_rows.append(row)
+    df = pd.DataFrame(df_rows, columns=['Que ID', 'Primary Question', 'Path', 'faqLinkedBy', 'faqLinkedTo'])
+    df[['Faq', 'Alternate Question', 'Tags', 'ReferenceId', 'Display Name', "isSoftDeleted",
+        "Extended Answer-1", "Extended Answer-2"]] = ""
+    df['Answer'] = df['Primary Question']
+    df = df[["Faq", "Que ID", "Path", "Primary Question", "Alternate Question", "Tags", "Answer", "ReferenceId",
+           "Display Name", "faqLinkedTo", "faqLinkedBy", "isSoftDeleted", "Extended Answer-1", "Extended Answer-2"]]
+
+    df.to_csv("root_kg.csv", index=False)
+    # print("\n".join(set(different_concept_name)))
